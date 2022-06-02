@@ -1,0 +1,324 @@
+---
+title: "Práctica 2. Tipología y ciclo de vida del dato."
+author: "Alberto Mariscal y Elena Naranjo"
+date: "29/5/2022"
+output:
+  pdf_document:
+    toc: yes
+    latex_engine : pdflatex
+    highlight: zenburn
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE}
+library(tidyr)
+library(nortest)
+```
+
+
+## 1.	Descripción del dataset. ¿Por qué es importante y qué pregunta/problema pretende responder?
+
+EL dataset elegido se puede encontrar en la plataforma Kaggle, conocida por los concursos que organiza en temas relacionados con Data Science y los datasets que ofrece (https://www.kaggle.com/competitions/actuarial-loss-estimation/data). Se trata de un conjunto de datos que incluye 90000 casos realistas de compensaciones por seguros laborales en casos de accidentes en el trabajo. Para cada registro se tiene información demográfica y del empleado, así como una descripción del accidente.
+
+El dataset incluye 15 variables que tienen los siguientes nombres y descripciones:
+
+* ClaimNumber: es un identificador único de la poliza que servirá para identificarla y distinguirla de las demás
+* DateTimeOfAccidente: fecha y hora del accidente
+* DateReported: Fecha en la que se reporta el accidente
+* Age: Edad del trabajador
+* Gender: Sexo del trabajador
+* MaritalStatus: estado civil del trabajador que podrá estar casado (M), soltero (S) o no tener información al respecto (U)
+* DependentChildren: número de niños dependientes del trabajador
+* DependentsOther: número de dependientes del trabajador sin contabilizar los niños
+* WeeklyWage: salario semanal del trabajador
+* PartTimeFullTime: tipo de contrato laboral que podrá ser a tiempo parcial (P) o a jornada completa (F)
+* HoursWorkedPerWeek: número total de horas trabajadas a la semana
+* DaysWorkedPerWeek: Número total de días trabajados a la semana
+* ClaimDescription: campo libre con comentarios descriptivos sobre el registro
+* InitialIncurredClaimCost: coste inicial estimado por la aseguradora
+* UltimateIncurredClaimCost: pagos totales de la aseguradora al trabajador
+
+El dataset se ha elegido porque nos parece que está muy completo, permite realizar análisis interesantes y trata un tema de gran relevancia, interés y actualidad. Anualmente, las compañías aseguradoras deben hacer frente a grandes costes por las polizas que deben abonar, muchos de ellos debido a fraudes o desvíos significativos sobre lo inicialmente presupuestado. Estamos seguros que las grandes compañías, al igual que los bancos hacen con sus productos por ejemplo, cuentan con grandes departamentos de data analysis y data science que tratan de desarrollar modelos para ajustar lo mejor posible sus polizas y será lo que en esta práctica intentaremos, en la medida de lo posible, replicar.
+
+El objetivo de la práctica es el de crear un modelo para establecer el precio a pagar en función del accidente, así como analizar si existen diferencias entre diferentes grupos como, por ejemplo, hombres y mujeres.
+
+```{r}
+claim <- read.csv("dataset_original.csv")
+```
+
+## 2.	Integración y selección de los datos de interés a analizar. Puede ser el resultado de adicionar diferentes datasets o una subselección útil de los datos originales, en base al objetivo que se quiera conseguir.
+
+En un principio no consideramos que sea necesario filtrar los datos ni hacer selecciones de los mismos ya que Kaggle nos los proporciona en dos archivos diferentes divididos en train y test. Por otro lado, no hay categorías o grupos diferentes como para separarlo, por lo que consideramos que no tendría ningún sentido hacerlo.
+
+En primer lugar, lo que nos interesa será cambiar el nombre de las columnas:
+
+```{r}
+library(dplyr)
+
+names(claim) <-  c('Id', 'Ocurrencia', 'Apertura', 'Edad', 'Sexo', 'Estado', 'Dependientes', 'OtrosDepend', 'Salario', 'Jornada', 'HorasSemana', 'DiasSemana', 'Descripcion','CosteInicio', 'CosteFinal')
+
+head(claim)
+```
+
+En segundo lugar, para facilitar los cálculos temporales convertiremos las variables **Ocurrencia y Apertura** a formato fecha para más facilidad en su posterior tratamiento. De la misma manera, creamos una nueva variable llamada **Tiempo** que será el tiempo transcurrido entre la fecha del accidente y la apertura del incidente.
+
+```{r}
+claim$Ocurrencia <- as.Date(claim$Ocurrencia)
+claim$Apertura <- as.Date(claim$Apertura)
+
+claim$tiempo <- as.integer(claim$Apertura - claim$Ocurrencia, units = "days")
+head(claim)
+```
+
+Vamos a crear también una variable categórica llamada **Clasificación** relativa al tiempo calculado anteriormente.
+
+```{r}
+claim$Clasificacion <- cut(as.double(claim$tiempo), breaks = c(0, 15, 30, 89, Inf), labels = c("Muy rapido", "Rapido", "Lento", "Muy lento"), right = TRUE)
+head(claim)
+```
+
+Además de estas variables, crearemos una columna llamada **RiesgoSM** que contenga información sobre el riesgo de enfermedades relacionadas con la salud mental, tema de total actualidad, en el trabajador. Para ello, haremos uso de la columna que contiene una descripción en texto de lo sucedido.
+
+```{r}
+claim$RiesgoSM <- as.factor(case_when(grepl("STRESS|ANXIETY|HARASSMENT|DEPRESSION", claim$Descripcion) == TRUE ~ 1, grepl("STRESS|ANXIETY|HARASSMENT|DEPRESSION", claim$Descripcion) == FALSE ~ 0))
+table(claim$RiesgoSM)
+```
+
+Por último, exploramos los datos para tener una idea inicial tras los cambios y creaciones de nuevas columnas:
+
+```{r}
+summary(claim)
+```
+
+
+## 3.	Limpieza de los datos
+
+### 3.1 ¿Los datos contienen ceros o elementos vacíos? Gestiona cada uno de estos casos
+
+Para poder gestionar los valores que faltan deberemos ver qué registros tienen valores desconocidos como "nan" pero también aquellos que están introducidos como "u" de unknown, por ejemplo. Este trabajo deberá hacerse manualmente para cada variable ya que es específico para este dataset y deberemos comprender qué información contiene cada columna para entender cómo tratar los datos.
+
+Comenzamos con la variable **Sexo** para ver cuántos tipos diferentes de registros tiene el dataset:
+
+```{r}
+# Variable Sexo
+table(claim$Sexo)
+```
+
+Como podemos ver, tenemos 3 categorías en la variable Sexo, 12338 catalogados como femenino, 41660 como masculino y 2 como desconocidos. Estos últimos serán aquellos valores desconocidos y haremos que R los trate como tal asignándoles el valor nan de manera que no se incluyan en las estadísticas al hacer cálculos.
+
+```{r}
+claim$Sexo <- na_if(claim$Sexo, "U")
+```
+
+Continuamos con la varible **Estado**:
+
+```{r}
+# Variable Sexo
+table(claim$Estado)
+```
+
+Vemos que hay registros que tienen un string vacío ("") o también desconocido ("u"). Procederemos de la misma manera, asignándoles el valor nan para que R ya distinga que son valores que faltan.
+
+```{r}
+claim$Estado <- na_if(claim$Estado, "U")
+claim$Estado <- na_if(claim$Estado, "")
+
+table(claim$Estado)
+```
+
+Dado que casi un 10% de los datos de Estado son nulos, vamos a realizar un filtro, **seleccionando solo con aquellos registros que no tengan datos nulos** de cara a un mejor modelo en el futuro, llamaremos a este nuevo conjunto claimNET:
+
+```{r}
+# Comprobamos valores NA
+summary(claim)
+claimNET <- drop_na(claim)
+```
+
+### 3.2 Identifica y gestiona los valores extremos
+
+Para identificar los valores extremos, procederemos a mostrarr las diferentes variables en boxplots frente a la variable objetivo a poder predecir CosteFinal, de manera que se observe la relación entre ellas y la distribución de las mismas en las distintas categorías.
+
+```{r}
+# Segun sexo
+boxplot(formula = CosteFinal ~ Sexo, data=claimNET, log='y')
+
+# Segun Estado
+boxplot(formula = CosteFinal ~ Estado, data=claimNET, log='y')
+
+#Segun Clasificacion
+boxplot(formula = CosteFinal ~ Clasificacion, data=claimNET, log='y')
+
+# Segun RiesgoSM
+boxplot(formula = CosteFinal ~ RiesgoSM, data=claimNET, log='y')
+```
+
+Tal y como podemos observar en las representaciones anteriores, los datos están relativamente agrupados para todas las variables y parece que el dataset, en general, está relativamente limpio. No se aprecian en un primer momento registros que se encuentren muy alejados de los demás o de los cuartiles principales, estando también un gran número de registros agrupados en los extremos, sobre todo superior, de los costes. Por tanto, consideramos que a pesar de haber valores extremos, no se trata de valores anómalos y deberán ser tenidos en consideración a la hora de analizar los datos, por lo que no se procederá a eliminarlos.
+
+## 4.	Análisis de los datos
+
+### 4.1 Selección de los grupos de datos que se quieren analizar/comparar (p.e. si se van a comparar grupos de datos, ¿cuáles son estos grupos y qué tipo de análisis se van a aplicar?
+
+Se diferenciarán dos grupos de acuerdo a su **Sexo**, hombres y mujeres. La comprobación que se realizará es si la indemnización de las mujeres supera la de los hombres. Diferenciamos los grupos de la siguiente forma:
+
+```{r}
+mujeres <- claimNET$CosteFinal[claimNET$Sexo=="F"]
+hombres <- claimNET$CosteFinal[claimNET$Sexo=="M"]
+```
+
+### 4.2 Comprobación de la normalidad y la homogeneidad de la varianza
+
+En este caso, estamos interesados en conocer si la variable **CosteFinal** sigue una distribución normal. Para la comprobación de la normalidad haremos uso de la representación qqnorm y qqline que nos darán una idea visualmente de cómo se distribuyen los datos. Afortunadamente, estas funciones son fácilmente implementables en R:
+
+```{r}
+qqnorm(claimNET$CosteFinal)
+qqline(claimNET$CosteFinal)
+```
+
+Como se puede observar, los datos no parecen distribuirse de manera normal, ya que de hacerlo la representación sería muy parecida a una recta inclinada.
+
+Podemos realizar una segunda comprobación con el contraste de normalidad de Lilliefors, donde tendremos las siguientes hipótesis:
+
+* H0 = Los datos no proceden de una distribución normal
+* H1 = Los datos no proceden de una distribución normal
+
+```{r}
+lillie.test(claimNET$CosteFinal)
+```
+
+Como se puede observar, el resultado es $p-value < 0.05$ por lo que podremos rechazar la hipótesis nula de normalidad de datos al igual que sucede en el análisis visual. Por tanto, podemos decir que la variable **CosteFinal no sigue una distribución normal**. 
+
+### 4.3 Aplicación de pruebas estadísticas para comparar los grupos de datos. En función de los datos y el objetivo del estudio, aplicar pruebas de contraste de hipótesis, correlaciones, regresiones, etc. Aplicar al menos tres métodos de análisis diferentes.
+
+El primer análisis que vamos a realizar es si podemos aceptar que la indemnización a las mujeres supera en más de 100€ a la de los hombres
+Plantearemos el siguiente contraste de hipótesis:
+
+$H_0 : \mu_{Mujeres} - \mu_{Hombres} \leq 1000$
+
+$H_1 : \mu_{Mujeres} - \mu_{Hombres} > 1000$
+
+Donde $\mu$ se refiere a las respectivas medias poblacionales.
+
+Para poder elegir el test a aplicar haremos en primer lugar un análisis de las varianzas para comprobar si ambos grupos presentan diferencias significativas:
+
+```{r}
+# Realizamos el test de varianzas
+var.test(mujeres, hombres)
+```
+
+Al arrojar el test de varianzas un $p-value < 0.05$ rechazaremos la hipótesis de igualdad de varianzas y utilizaremos un test sobre la media de dos muestras independientes con una varianza desconocida y diferente entre ellas:
+
+```{r}
+# Calculamos el estadístico de contraste, valor crítico y p-value
+
+mujeres.n <- length(mujeres)
+hombres.n <- length(hombres)
+
+mujeres.mean <- mean(mujeres)
+hombres.mean <- mean(hombres)
+
+mujeres.sd <- sd(mujeres)
+hombres.sd <- sd(hombres)
+
+d <- (mujeres.sd^2/mujeres.n+hombres.sd^2/hombres.n)^2/(mujeres.sd^4/(mujeres.n^2*(mujeres.n-1))+hombres.sd^4/(hombres.n^2*(hombres.n-1)))
+
+d
+```
+
+```{r}
+s <- sqrt(mujeres.sd^2/mujeres.n + hombres.sd^2/hombres.n)
+obs.value <- (mujeres.mean-hombres.mean-1000) / s
+obs.value
+```
+
+```{r}
+pvalue <- pt(obs.value, df= d, lower.tail = FALSE)
+pvalue
+```
+
+```{r}
+critic.value <- qt(0.05, df=d, lower.tail = FALSE)
+critic.value
+```
+
+El pvalor obtenido ha sido 0.0001648202, por tanto $p-value = 0.0001648202 < 0.05$, lo que indica que se rechaza la hipótesis nula. Por otra parte, el valor observado es 3.591609, que no se encuentra dentro de la zona de aceptación, dado que $3.591609 \notin [-\infty, 1.64495]$, de forma que se confirma el rechazo de la hipótesis nula y concluimos que en promedio, la indemnización de las mujeres es superior en 1000 euros a la de los hombres.
+
+Una vez comprobada la diferencia entre hombres y mujeres, como segundo análisis, vamos a intentar generar un modelo de regresión lineal que pueda predecir el coste que va a tener un determinado accidente:
+
+```{r}
+# Crear un modelo de regresión lineal múltiple: Edad, Sexo, Estado, Dependientes, OtrosDepend, salario, Jornada, HorasSemana, DiasSemana, Clasificacion, RiesgoSM, CosteInicio y como variable CosteFinal en escala logaritmica
+
+# Convertimos CosteInicio a logaritmico
+claimNET$CosteInicio_log = log(claimNET$CosteInicio)
+claimNET$CosteFinal_log <- log(claimNET$CosteFinal)
+model_3 <- lm(CosteFinal_log ~ Edad + Sexo + Estado + Dependientes + OtrosDepend + Salario + Jornada + HorasSemana + DiasSemana + Clasificacion + RiesgoSM + CosteInicio_log, data = claimNET)
+
+summary(model_3)
+```
+
+Para hacernos una idea de la calidad del modelo, observaremos el valor de R-squared, que presenta un valor de 0.75, lo que indica que el modelo es claramente mejorable pero no del todo desacertado.
+
+Finalmente, como tercer análisis, vamos a realizar un **análisis ANOVA** que contraste si existen diferencias en la variable **CosteFinal** de acuerdo a la **Clasificación** creada en relación al tiempo entre apertura de incidencia y pago creada al principio.
+
+El factor Clasificacion tiene 4 niveles: 1 Muy lento, 2 Lento, 3 Rápido y 4 Muy rápido. Las hipótesis son:
+
+$H_0: \mu_1 = \mu_2 = \mu_3 = \mu_4$
+
+$H_1 : \mu_i \neq \mu_j$ para algún $i, j$
+
+donde $\mu_1, \mu_2, \mu_3, \mu_4$ denotan, la media poblacional de CosteFinal para las distintas clasificaciones Muy lento, Lento, Rápido y Muy rápido.
+
+Creamos el modelo ANOVA, En primer lugar, con las hipótesis anteriores, vemos si podemos asumir la igualdad de medias entre los cuatro grupos:
+
+```{r}
+#aov
+Model.5.2.aov <- aov(log(CosteFinal) ~ Clasificacion, claimNET)
+kk <- summary(Model.5.2.aov)
+kk
+```
+```{r}
+#lm
+Model.5.2.lm <- lm(log(CosteFinal) ~ Clasificacion, claimNET)
+anova(Model.5.2.lm)
+```
+
+El p-valor (Pr(> F)) es prácticamente 0, menor a 0.05 lo que indica que, el factor analizado es significativo. En conclusión, rechazamos la hipótesis nula de igualdad de medias entre los cuatro grupos del factor.
+
+
+Estimemos el efecto de cada uno de los niveles:
+
+```{r}
+mu <- mean(claimNET$CosteFinal); mu
+```
+```{r}
+alpha1 <- mean(claimNET$CosteFinal[claimNET$Clasificacion=="Muy lento"])-mu
+alpha2 <- mean(claimNET$CosteFinal[claimNET$Clasificacion=="Lento"])-mu
+alpha3 <- mean(claimNET$CosteFinal[claimNET$Clasificacion=="Rapido"])-mu
+alpha4 <- mean(claimNET$CosteFinal[claimNET$Clasificacion=="Muy rapido"])-mu
+alpha1; alpha2; alpha3; alpha4
+```
+El efecto de Clasificacion es negativo para los clasificados como Muy rápido mientras que es positivo para los clasificados como Rápido, Lento y Muy lento.
+
+## 5.	Representación de los resultados a partir de tablas y gráficas. Este apartado se puede responder a lo largo de la práctica, sin necesidad de concentrar todas las representaciones en este punto de la práctica.
+
+Desarrollado a lo largo de la práctica.
+
+## 6.	Resolución del problema. A partir de los resultados obtenidos, ¿cuáles son las conclusiones? ¿Los resultados permiten responder al problema?
+
+Las conclusiones finales son que este dataset permite la estimación del precio a pagar por las aseguradoras en función de sus variables, aunque el modelo conseguido debería ser mejorado para poder emplearlo realmente, dado su R-squared.
+
+Por otra parte, hemos concluido que existen diferencias entre la indemnización de mujeres y hombres.
+
+Finalmente, hemos visto que el tiempo que se tarda desde que se abre la incidencia hasta que resuelve influye en el coste final a pagar.
+
+## 7.	Código: Hay que adjuntar el código, preferiblemente en R, con el que se ha realizado la limpieza, análisis y representación de los datos. Si lo preferís, también podéis trabajar en Python
+
+Adjuntado en el github.
+
+Finalmente, extraemos el conjunto de datos final:
+
+```{r}
+write.csv(claimNET, "dataset_final.csv")
+```
